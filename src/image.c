@@ -112,17 +112,31 @@ void get_start_point(int start_row, int *l_x, int *l_y, int *r_x, int *r_y)
 
         int lx = 0, rx = 0;
 
-        for (int i = IMAGE_W / 2; i > BORDER_MIN; i--)
+        // 扫到 BORDER_MIN / BORDER_MAX 本身：add_black_border 特意在外圈留了黑，
+        // 贴边的赛道靠这一圈才有跳变可认，少扫一格就白留了
+        for (int i = IMAGE_W / 2; i >= BORDER_MIN; i--)
             if (bin_image[row][i] == 255 && bin_image[row][i - 1] == 0) {
                 lx = i;
                 break;
             }
 
-        for (int i = IMAGE_W / 2; i < BORDER_MAX; i++)
+        for (int i = IMAGE_W / 2; i <= BORDER_MAX; i++)
             if (bin_image[row][i] == 255 && bin_image[row][i + 1] == 0) {
                 rx = i;
                 break;
             }
+
+        // 缺陷 2：赛道整段偏在中线一侧时，从中间往外只能扫到朝着中线的那一端，
+        // 另一端在反方向、扫不到。沿同一段白区把缺的那端补出来；两端都没有就不猜。
+        if (lx > 0 && rx == 0) {
+            int i = lx;
+            while (i < BORDER_MAX && bin_image[row][i + 1] == 255) i++;
+            if (i > lx) rx = i;
+        } else if (rx > 0 && lx == 0) {
+            int i = rx;
+            while (i > BORDER_MIN && bin_image[row][i - 1] == 255) i--;
+            if (i < rx) lx = i;
+        }
 
         if (lx > 0 && rx > 0) {                     // 左右都找到才算这一行有效
             *l_x = lx; *l_y = row;
