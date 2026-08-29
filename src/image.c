@@ -491,11 +491,57 @@ void fit_line_upward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r)
 }
 
 //补线
-void patch_border_line_downward(int start_y, int end_y, float k_l, float b_l, float k_r, float b_r)
+//往下拟合：断口下方用自下而上的边界，和 fit_line_upward 对称
+int fit_line_downward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r)
+{
+    int window = 10;
+
+    float sum_x = 0, sum_y_l = 0, sum_xy_l = 0, sum_x2 = 0;
+    float sum_y_r = 0, sum_xy_r = 0;
+    int count = 0;
+
+    for (int y = base_y; y < base_y + window; y++) {
+        if (y <= 0 || y >= IMAGE_H) continue;
+
+        int lx = l_border[y];
+        int rx = r_border[y];
+        if (lx <= BORDER_MIN || rx >= BORDER_MAX || lx >= rx) continue;   // 默认值的行不要
+
+        sum_x += y;
+        sum_y_l += lx;
+        sum_y_r += rx;
+        sum_xy_l += y * lx;
+        sum_xy_r += y * rx;
+        sum_x2 += y * y;
+        count++;
+    }
+
+    if (count < 2) {                       // 下段没有可用数据，让调用方退回单向外推
+        *k_l = *b_l = *k_r = *b_r = 0;
+        return 0;
+    }
+
+    float denom = count * sum_x2 - sum_x * sum_x + 1e-5;
+    *k_l = (count * sum_xy_l - sum_x * sum_y_l) / denom;
+    *b_l = (sum_y_l - (*k_l) * sum_x) / count;
+
+    *k_r = (count * sum_xy_r - sum_x * sum_y_r) / denom;
+    *b_r = (sum_y_r - (*k_r) * sum_x) / count;
+    return 1;
+}
+
+void patch_border_line_downward(int start_y, int end_y, float k_l, float b_l, float k_r, float b_r,
+                                float k_l2, float b_l2, float k_r2, float b_r2, int has_down)
 {
     for (int y = start_y; y <= end_y && y < IMAGE_H; y++) {
-        int lx = (int)(k_l * y + b_l);
-        int rx = (int)(k_r * y + b_r);
+        // 只用上段外推的话，两段横向错开时会打偏。下段可用时按行号在两条拟合线之间过渡：
+        // 起点贴着上段、终点落在下段，中间线性过渡。
+        // 只用上段外推的话，两段横向错开时会打偏；下段可用时在两条拟合线之间过渡。
+        // 权重用 smoothstep 而不是线性：两端各自的走向延续得久一些，中间再交接。
+        float t = (has_down && end_y > start_y) ? (float)(y - start_y) / (end_y - start_y) : 0.0f;
+        t = t * t * (3.0f - 2.0f * t);
+        int lx = (int)((1 - t) * (k_l * y + b_l) + t * (k_l2 * y + b_l2));
+        int rx = (int)((1 - t) * (k_r * y + b_r) + t * (k_r2 * y + b_r2));
 
         // 限制左右边界
         lx = lx < BORDER_MIN ? BORDER_MIN : (lx > BORDER_MAX ? BORDER_MAX : lx);
@@ -610,8 +656,10 @@ void process_current_frame(void)
 
     float k_l, b_l, k_r, b_r;
     fit_line_upward(y2 - 1, &k_l, &b_l, &k_r, &b_r);
+    float k_l2, b_l2, k_r2, b_r2;
+    int has_down = fit_line_downward(y1 + 1, &k_l2, &b_l2, &k_r2, &b_r2);   // 下段也拟合
 
-    patch_border_line_downward(y2, y1, k_l, b_l, k_r, b_r);
+    patch_border_line_downward(y2, y1, k_l, b_l, k_r, b_r, k_l2, b_l2, k_r2, b_r2, has_down);
     compute_center_line_down(); 
     kalman_filter_center_line2(y1);// Kalman滤波
     // smooth_center_line_blend(y1, 10); // 可调节 blend 长度

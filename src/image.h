@@ -67,7 +67,9 @@ int detect_break_in_center_line_down(int *fit_lx, int *fit_rx);
 
 // 最小二乘拟合 + 补线
 void fit_line_upward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r);
-void patch_border_line_downward(int start_y, int end_y, float k_l, float b_l, float k_r, float b_r);
+int  fit_line_downward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r);
+void patch_border_line_downward(int start_y, int end_y, float k_l, float b_l, float k_r, float b_r,
+                                float k_l2, float b_l2, float k_r2, float b_r2, int has_down);
 // 卡尔曼滤波
 void kalman_filter_center_line2(int y_start);
 // 合并并绘制最终中心线
