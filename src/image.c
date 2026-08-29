@@ -101,17 +101,36 @@ void get_start_point(int start_row, int *l_x, int *l_y, int *r_x, int *r_y)
     *l_x = 0; *l_y = start_row;
     *r_x = 0; *r_y = start_row;
 
-    for (int i = IMAGE_W / 2; i > BORDER_MIN; i--)
-        if (bin_image[start_row][i] == 255 && bin_image[start_row][i - 1] == 0) {
-            *l_x = i;
-            break;
-        }
+    // 赛道不一定压到画面最上/最下一行：原来只搜 start_row 这一行，搜不到就把种子留在 0，
+    // 于是自上而下那趟只走出一个点，y2 恒为 -1，补线整段永远不触发。
+    // 现在搜不到就往画面中间逐行回退，最多退 SEED_SEARCH_ROWS 行。
+    int step = (start_row > IMAGE_H / 2) ? -1 : 1;   // 从底行往上找 / 从顶行往下找
 
-    for (int i = IMAGE_W / 2; i < BORDER_MAX; i++)
-        if (bin_image[start_row][i] == 255 && bin_image[start_row][i + 1] == 0) {
-            *r_x = i;
-            break;
+    for (int n = 0; n < SEED_SEARCH_ROWS; n++) {
+        int row = start_row + n * step;
+        if (row < BORDER_MIN || row > IMAGE_H - 2) break;
+
+        int lx = 0, rx = 0;
+
+        for (int i = IMAGE_W / 2; i > BORDER_MIN; i--)
+            if (bin_image[row][i] == 255 && bin_image[row][i - 1] == 0) {
+                lx = i;
+                break;
+            }
+
+        for (int i = IMAGE_W / 2; i < BORDER_MAX; i++)
+            if (bin_image[row][i] == 255 && bin_image[row][i + 1] == 0) {
+                rx = i;
+                break;
+            }
+
+        if (lx > 0 && rx > 0) {                     // 左右都找到才算这一行有效
+            *l_x = lx; *l_y = row;
+            *r_x = rx; *r_y = row;
+            return;
         }
+    }
+    // 回退到底仍未找到，种子保持 0，调用方据此判断本趟无效
 }
 
 // 获取左右边界起始点

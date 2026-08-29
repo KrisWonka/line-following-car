@@ -9,6 +9,7 @@
 #define BLACK_PIXEL 0
 #define BORDER_MIN 1
 #define BORDER_MAX (IMAGE_W - 2)
+#define SEED_SEARCH_ROWS 30   // 起点行找不到跳变时，最多往画面中间回退的行数
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,7 +54,7 @@ extern int points_l2[MAX_POINTS][2];
 extern int points_r2[MAX_POINTS][2];
 
 // 从上往下八邻域边界搜索
-void search_l_r_top_down(int start_row);
+void search_l_r_top_down(int l_start_x, int l_start_y, int r_start_x, int r_start_y);
 void get_left_down(void);
 void get_right_down(void);
 void compute_center_line_down(void);
