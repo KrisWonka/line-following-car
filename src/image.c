@@ -470,9 +470,11 @@ int fit_line_upward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r)
 
         int lx = l_border_top[y];
         int rx = r_border_top[y];
-        // 没被搜索填过的行仍是默认值（BORDER_MIN / BORDER_MAX），中点恒为 93，
-        // 原来的判断放它过去了，等于在拟合一堆假数据
-        if (lx <= BORDER_MIN || rx >= BORDER_MAX || lx >= rx) continue;
+        // 没被搜索填过的行左右同时是默认值（BORDER_MIN / BORDER_MAX），中点恒为 93，
+        // 原来的判断放它过去了，等于在拟合一堆假数据。
+        // 只判"同时"——车道本来就可能贴着画面一侧，那一边是真数据不是默认值。
+        if (lx <= BORDER_MIN && rx >= BORDER_MAX) continue;
+        if (lx >= rx) continue;
 
         sum_x += y;
         sum_y_l += lx;
@@ -515,7 +517,8 @@ int fit_line_downward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r
 
         int lx = l_border[y];
         int rx = r_border[y];
-        if (lx <= BORDER_MIN || rx >= BORDER_MAX || lx >= rx) continue;   // 默认值的行不要
+        if (lx <= BORDER_MIN && rx >= BORDER_MAX) continue;   // 左右同时是默认值才算没填过
+        if (lx >= rx) continue;
 
         sum_x += y;
         sum_y_l += lx;
@@ -674,7 +677,9 @@ void process_current_frame(void)
     float k_l2, b_l2, k_r2, b_r2;
     int has_down = fit_line_downward(y1 + 1, &k_l2, &b_l2, &k_r2, &b_r2);   // 下段也拟合
 
-    patch_border_line_downward(y2, y1, k_l, b_l, k_r, b_r, k_l2, b_l2, k_r2, b_r2, has_up, has_down);
+    // 两端都没有可用锚点时不要补线——原来照样执行，k/b 全是 0，会把中心线写成垃圾
+    if (has_up || has_down)
+        patch_border_line_downward(y2, y1, k_l, b_l, k_r, b_r, k_l2, b_l2, k_r2, b_r2, has_up, has_down);
     compute_center_line_down(); 
     kalman_filter_center_line2(y1, y2);// Kalman滤波（只作用于重建段）
     // smooth_center_line_blend(y1, 10); // 可调节 blend 长度
