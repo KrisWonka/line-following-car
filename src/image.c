@@ -385,8 +385,15 @@ void compute_center_line_down(void)
 int center_line2_filtered[IMAGE_H];  // 滤波后的中线
 void kalman_filter_center_line2(int y_start, int y_top)
 {   
-    float x = center_line2[1];  // 位置估计值
-    float v = center_line2[2] - center_line2[1];;  // 速度（斜率）估计值
+    // 从第一行真正有数据的地方起步。原来固定用第 1 行，而顶部往往还没有车道，
+    // center_line2[1] 是默认值 93，滤波器要花十几行才收敛回真实位置。
+    int y0 = 1;
+    while (y0 + 1 < y_start &&
+           !(l_border_top[y0] < r_border_top[y0] &&
+             !(l_border_top[y0] <= BORDER_MIN && r_border_top[y0] >= BORDER_MAX))) y0++;
+
+    float x = center_line2[y0];  // 位置估计值
+    float v = center_line2[y0 + 1] - center_line2[y0];  // 速度（斜率）估计值
     float p_x = 0.3, p_v = 0.3;  // 初始误差
     float q_x = 0.05, q_v = 0.05;  // 过程噪声
     float r = 4.0;  // 测量噪声
@@ -397,7 +404,7 @@ void kalman_filter_center_line2(int y_start, int y_top)
         center_line2_filtered[y] = center_line[y];  
     }
 
-    for (int y = 1; y < y_start; y++) {
+    for (int y = y0; y < y_start; y++) {
         int z = center_line2[y];  // 测量值（中心线位置）
 
         // 预测：常速模型先按斜率把位置推进一行。
@@ -593,6 +600,13 @@ void merge_center_lines_final(int y_split)
         if (!ROW_HAS(l_border[y], r_border[y]) && ROW_HAS(l_border_top[y], r_border_top[y]))
             center_line_final[y] = center_line2[y];
     }
+
+    // 两趟都没数据的行标成 -1：那里根本没有测量值，把默认的 93 当中心线画出来，
+    // 会在画面顶部拉出一段竖直假线，再跳回真实车道，看着就是一道折角。
+    for (int y = 0; y < IMAGE_H; y++) {
+        if (!ROW_HAS(l_border[y], r_border[y]) && !ROW_HAS(l_border_top[y], r_border_top[y]))
+            center_line_final[y] = -1;
+    }
     #undef ROW_HAS
 }
 
@@ -643,7 +657,7 @@ void draw_center_line_final(void)
 {
     for (int i = 0; i < IMAGE_H; i++) {
         int x = center_line_final[i];
-        if (x >= 0 && x < IMAGE_W){
+        if (x > 0 && x < IMAGE_W){          // -1 表示这一行没有测量值，不画
             bin_image[i][x] = 120; 
         }
     }
