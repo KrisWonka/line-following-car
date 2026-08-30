@@ -582,6 +582,18 @@ void merge_center_lines_final(int y_split)
     for (int y = y_split + 1; y < IMAGE_H; y++) {
         center_line_final[y] = center_line[y];
     }
+
+    // 有时自下而上那趟整段走不起来（断口正好压在画面底部就会这样），center_line
+    // 全是默认值、常数数组又测不出断点，y1 拿到 -1，于是整幅输出退化成 x=93 的直线，
+    // 而自上而下那趟明明是好的。凡是这一趟没数据、另一趟有的行，就用另一趟的。
+    // 一行算“有数据”要同时满足：左边界确实在右边界左侧，且不是原封不动的默认值对。
+    // 只判其中一条都不够——(1,186) 是没填过，(186,186) 是填坏了，两种都得排掉。
+    #define ROW_HAS(l, r) ((l) < (r) && !((l) <= BORDER_MIN && (r) >= BORDER_MAX))
+    for (int y = 1; y < IMAGE_H - 1; y++) {
+        if (!ROW_HAS(l_border[y], r_border[y]) && ROW_HAS(l_border_top[y], r_border_top[y]))
+            center_line_final[y] = center_line2[y];
+    }
+    #undef ROW_HAS
 }
 
 //中心线平滑处理：
