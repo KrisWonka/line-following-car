@@ -383,7 +383,7 @@ void compute_center_line_down(void)
 }
 
 int center_line2_filtered[IMAGE_H];  // 滤波后的中线
-void kalman_filter_center_line2(int y_start)
+void kalman_filter_center_line2(int y_start, int y_top)
 {   
     float x = center_line2[1];  // 位置估计值
     float v = center_line2[2] - center_line2[1];;  // 速度（斜率）估计值
@@ -400,6 +400,11 @@ void kalman_filter_center_line2(int y_start)
     for (int y = 1; y < y_start; y++) {
         int z = center_line2[y];  // 测量值（中心线位置）
 
+        // 预测：常速模型先按斜率把位置推进一行。
+        // 原来漏了这一步——v 算出来却从没用于推进 x，整个滤波退化成一个很重的
+        // 指数平滑（稳态增益约 0.106，时间常数约 9 行），跟不上弯道。
+        x = x + v;
+
         // 更新卡尔曼滤波
         k_x = p_x / (p_x + r);  // 位置卡尔曼增益
         k_v = p_v / (p_v + r);  // 斜率卡尔曼增益
@@ -412,7 +417,9 @@ void kalman_filter_center_line2(int y_start)
         p_x = (1 - k_x) * p_x + q_x;
         p_v = (1 - k_v) * p_v + q_v;
 
-        center_line2_filtered[y] = (int)x;  // 存储滤波后的结果
+        // 只有重建出来的那一段才写滤波值；y_top 以上是真实测出来的中心线，
+        // 没有理由去抹平它（论文里滤波也只作用于重建段）
+        center_line2_filtered[y] = (y >= y_top) ? (int)x : z;
     }
 }
 
@@ -450,7 +457,7 @@ int detect_break_in_center_line_down(int *fit_lx, int *fit_rx)
 }
 
 //最小二乘法拟合
-void fit_line_upward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r)
+int fit_line_upward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r)
 {
     int window = 10;
 
@@ -463,7 +470,9 @@ void fit_line_upward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r)
 
         int lx = l_border_top[y];
         int rx = r_border_top[y];
-        if (lx <= 0 || rx <= 0 || lx >= IMAGE_W || rx >= IMAGE_W) continue;
+        // 没被搜索填过的行仍是默认值（BORDER_MIN / BORDER_MAX），中点恒为 93，
+        // 原来的判断放它过去了，等于在拟合一堆假数据
+        if (lx <= BORDER_MIN || rx >= BORDER_MAX || lx >= rx) continue;
 
         sum_x += y;
         sum_y_l += lx;
@@ -474,9 +483,9 @@ void fit_line_upward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r)
         count++;
     }
 
-    if (count == 0) {
+    if (count < 2) {
         *k_l = *b_l = *k_r = *b_r = 0;
-        return;
+        return 0;
     }
 
     float denom = count * sum_x2 - sum_x * sum_x + 1e-5;
@@ -488,6 +497,7 @@ void fit_line_upward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r)
 
     // printf("拟合左边界: k=%.2f, b=%.2f\n", *k_l, *b_l);//-----------------------------------------check
     // printf("拟合右边界: k=%.2f, b=%.2f\n", *k_r, *b_r);//-----------------------------------------check
+    return 1;
 }
 
 //补线
@@ -531,15 +541,20 @@ int fit_line_downward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r
 }
 
 void patch_border_line_downward(int start_y, int end_y, float k_l, float b_l, float k_r, float b_r,
-                                float k_l2, float b_l2, float k_r2, float b_r2, int has_down)
+                                float k_l2, float b_l2, float k_r2, float b_r2, int has_up, int has_down)
 {
     for (int y = start_y; y <= end_y && y < IMAGE_H; y++) {
         // 只用上段外推的话，两段横向错开时会打偏。下段可用时按行号在两条拟合线之间过渡：
         // 起点贴着上段、终点落在下段，中间线性过渡。
         // 只用上段外推的话，两段横向错开时会打偏；下段可用时在两条拟合线之间过渡。
         // 权重用 smoothstep 而不是线性：两端各自的走向延续得久一些，中间再交接。
-        float t = (has_down && end_y > start_y) ? (float)(y - start_y) / (end_y - start_y) : 0.0f;
-        t = t * t * (3.0f - 2.0f * t);
+        float t;
+        if (!has_up)             t = 1.0f;      // 上段没有真实数据，纯从下段往上外推
+        else if (!has_down)      t = 0.0f;      // 下段没有，退回原来的单向外推
+        else if (end_y > start_y) {
+            t = (float)(y - start_y) / (end_y - start_y);
+            t = t * t * (3.0f - 2.0f * t);
+        } else t = 0.0f;
         int lx = (int)((1 - t) * (k_l * y + b_l) + t * (k_l2 * y + b_l2));
         int rx = (int)((1 - t) * (k_r * y + b_r) + t * (k_r2 * y + b_r2));
 
@@ -655,13 +670,13 @@ void process_current_frame(void)
     int y2 = detect_break_in_center_line_down(&fit_lx, &fit_rx);
 
     float k_l, b_l, k_r, b_r;
-    fit_line_upward(y2 - 1, &k_l, &b_l, &k_r, &b_r);
+    int has_up = fit_line_upward(y2 - 1, &k_l, &b_l, &k_r, &b_r);
     float k_l2, b_l2, k_r2, b_r2;
     int has_down = fit_line_downward(y1 + 1, &k_l2, &b_l2, &k_r2, &b_r2);   // 下段也拟合
 
-    patch_border_line_downward(y2, y1, k_l, b_l, k_r, b_r, k_l2, b_l2, k_r2, b_r2, has_down);
+    patch_border_line_downward(y2, y1, k_l, b_l, k_r, b_r, k_l2, b_l2, k_r2, b_r2, has_up, has_down);
     compute_center_line_down(); 
-    kalman_filter_center_line2(y1);// Kalman滤波
+    kalman_filter_center_line2(y1, y2);// Kalman滤波（只作用于重建段）
     // smooth_center_line_blend(y1, 10); // 可调节 blend 长度
     merge_center_lines_final(y1);// 合并中心线
     draw_center_line_final();
