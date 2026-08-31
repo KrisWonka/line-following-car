@@ -114,11 +114,22 @@ int main()
         process_current_frame();
 
         // 图像角度计算
-        int sum = 0;
+        // center_line_final 现在可能是 -1（那一行两趟都没有测量值），必须先剔掉再平均。
+        // 直接把 -1 加进去会把均值往左拽：画面底部 15 行里只要有一行是 -1，
+        // 偏移就多出约 6 px、转角多出约 2.5 度，全是 -1 的极端帧实测能差 35 度。
+        int sum = 0, valid = 0;
         for (int i = IMAGE_H - 15; i < IMAGE_H; i++)
-            sum += center_line_final[i];
-        float cam_offset = (sum / 15.0f) - (IMAGE_W / 2.0f) + 11.0f;
-        float cam_angle = cam_offset * 0.4f;  // 每像素约0.4度
+            if (center_line_final[i] >= 0) { sum += center_line_final[i]; valid++; }
+
+        static float last_cam_angle_valid = 0.0f;
+        float cam_angle;
+        if (valid == 0) {
+            cam_angle = last_cam_angle_valid;   // 底部整段没有测量值：保持上一帧，不要凭空给一个角
+        } else {
+            float cam_offset = ((float)sum / valid) - (IMAGE_W / 2.0f) + 11.0f;
+            cam_angle = cam_offset * 0.4f;      // 每像素约0.4度
+            last_cam_angle_valid = cam_angle;
+        }
 
         // 灰度角度读取
         float gray_angle = read_gray_angle();
