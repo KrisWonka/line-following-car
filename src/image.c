@@ -96,6 +96,16 @@ void add_black_border(uint8_t image[IMAGE_H][IMAGE_W])
 }
 
 
+// 邻域访问越界保护。八邻域扫描不检查 nx/ny 就直接索引 bin_image，光标走到
+// 画面最上/最下一行时会读到数组外面（实测直道一帧就有几十次）。之前没出事，
+// 是因为 nx=-1 在 ny>=1 时正好别名到上一行第 187 列——而那一列 add_black_border
+// 永远刷成黑，所以"越界读"读到的恰好是黑。这里把这个巧合写成规则：画面外一律当黑。
+static inline uint8_t px(int y, int x)
+{
+    if (y < 0 || y >= IMAGE_H || x < 0 || x >= IMAGE_W) return 0;
+    return bin_image[y][x];
+}
+
 void get_start_point(int start_row, int *l_x, int *l_y, int *r_x, int *r_y)
 {
     *l_x = 0; *l_y = start_row;
@@ -173,7 +183,7 @@ void search_l_r(int l_start_x, int l_start_y, int r_start_x, int r_start_y)
             int ny = cy_l + seeds_l[i][1];
             int nxn = cx_l + seeds_l[(i + 1) & 7][0];
             int nyn = cy_l + seeds_l[(i + 1) & 7][1];
-            if (bin_image[ny][nx] == 0 && bin_image[nyn][nxn] == 255) {
+            if (px(ny, nx) == 0 && px(nyn, nxn) == 255) {
                 cx_l = nx;
                 cy_l = ny;
                 dir_l[l_count - 1] = i;
@@ -189,7 +199,7 @@ void search_l_r(int l_start_x, int l_start_y, int r_start_x, int r_start_y)
             int ny = cy_r + seeds_r[i][1];
             int nxn = cx_r + seeds_r[(i + 1) & 7][0];
             int nyn = cy_r + seeds_r[(i + 1) & 7][1];
-            if (bin_image[ny][nx] == 0 && bin_image[nyn][nxn] == 255) {
+            if (px(ny, nx) == 0 && px(nyn, nxn) == 255) {
                 cx_r = nx;
                 cy_r = ny;
                 dir_r[r_count - 1] = i;
@@ -302,7 +312,7 @@ void search_l_r_top_down(int l_start_x, int l_start_y, int r_start_x, int r_star
             int ny = cy_l + seeds_l[i][1];
             int nxn = cx_l + seeds_l[(i + 1) & 7][0];
             int nyn = cy_l + seeds_l[(i + 1) & 7][1];
-            if (bin_image[ny][nx] == 0 && bin_image[nyn][nxn] == 255) {
+            if (px(ny, nx) == 0 && px(nyn, nxn) == 255) {
                 cx_l = nx;
                 cy_l = ny;
                 dir_l[l_count - 1] = i;
@@ -318,7 +328,7 @@ void search_l_r_top_down(int l_start_x, int l_start_y, int r_start_x, int r_star
             int ny = cy_r + seeds_r[i][1];
             int nxn = cx_r + seeds_r[(i + 1) & 7][0];
             int nyn = cy_r + seeds_r[(i + 1) & 7][1];
-            if (bin_image[ny][nx] == 0 && bin_image[nyn][nxn] == 255) {
+            if (px(ny, nx) == 0 && px(nyn, nxn) == 255) {
                 cx_r = nx;
                 cy_r = ny;
                 dir_r[r_count - 1] = i;
@@ -398,6 +408,11 @@ void kalman_filter_center_line2(int y_start, int y_top)
     float q_x = 0.05, q_v = 0.05;  // 过程噪声
     float r = 4.0;  // 测量噪声
     float k_x, k_v;  // 卡尔曼增益
+
+    // y_start 就是 y1，没检测到断口时是 -1，直接当行号用会让下面的循环从 -1 起步，
+    // 读 center_line[-1]、写 center_line2_filtered[-1]，两边都越界。夹到 0：
+    // 没有断口时本来就该把整条自下而上的中心线原样拷过去。
+    if (y_start < 0) y_start = 0;
 
     // 保留 y1 以下的部分为原始 center_line 数据
     for (int y = y_start; y < IMAGE_H; y++) {
@@ -553,6 +568,9 @@ int fit_line_downward(int base_y, float *k_l, float *b_l, float *k_r, float *b_r
 void patch_border_line_downward(int start_y, int end_y, float k_l, float b_l, float k_r, float b_r,
                                 float k_l2, float b_l2, float k_r2, float b_r2, int has_up, int has_down)
 {
+    // start_y 可能是 -1：断点检测没找到断口时返回 -1，而 y2 是当作行号直接传进来的。
+    // 不夹住的话循环会从 y = -1 开始，写到 l_border_top[-1]，越界踩到相邻的全局数组。
+    if (start_y < 0) start_y = 0;
     for (int y = start_y; y <= end_y && y < IMAGE_H; y++) {
         // 只用上段外推的话，两段横向错开时会打偏。下段可用时按行号在两条拟合线之间过渡：
         // 起点贴着上段、终点落在下段，中间线性过渡。
