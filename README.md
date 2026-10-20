@@ -56,15 +56,18 @@ reads as a perfectly straight road — at exactly the moment the car is on a bro
 ## How it works
 
 ```
-camera frame ─► grayscale → 5×5 Gaussian → histogram equalization → resize 188×120
-             ─► Otsu threshold (+ tunable bias)                         ┐
-             ─► border tracing, bottom-up   ──► dies at row y₁          │  src/image.c
-             ─► border tracing, top-down    ──► dies at row y₂          │
-             ─► least-squares fit both sides of the gap, blend across   │
-             ─► 2-state Kalman over the rebuilt span → merged centerline┘
-             ─► steering angle θ_cam = mean offset of bottom 15 rows × 0.4°/px
-8-ch grayscale bar (I²C) ─► θ_gray = arctan(offset / 100 mm)            ┐  src/main.cpp
-fusion: |θ_cam − θ_gray| < 10° → average; otherwise trust the steadier one┘
+src/image.c — every frame
+  grayscale → 5×5 Gaussian → histogram equalization → resize to 188×120
+  → Otsu threshold (+ tunable bias)
+  → border tracing, bottom-up      (dies at row y₁)
+  → border tracing, top-down       (dies at row y₂)
+  → least-squares fit on both sides of the gap, blended across it
+  → 2-state Kalman over the rebuilt span → merged centerline
+
+src/main.cpp — every frame
+  θ_cam  = mean offset of the bottom 15 rows × 0.4°/px
+  θ_gray = arctan(offset / 100 mm)      from the 8-ch grayscale bar (I²C)
+  steer  = |θ_cam − θ_gray| < 10° ? their mean : the one that changed less
 ```
 
 1. **Binarize.** Otsu's method plus a hand-tunable bias on its answer. Raising the bias closes gaps,
@@ -150,9 +153,9 @@ wrong it drags the other with it. What shipped keys off disagreement instead:
 
 ```
 src/
-  main.cpp       camera capture + preprocessing, grayscale bar over I²C, sensor fusion, live display
-  image.c/.h     binarization, bidirectional tracing, break detection, gap bridging, Kalman, merge
-tests/           synthetic regression suite (synth.py → runner.c → bench.py), no OpenCV needed
+  main.cpp       capture + preprocessing, grayscale bar (I²C), fusion, live view
+  image.c/.h     binarize, two-way tracing, break detection, bridging, Kalman
+tests/           synthetic regression suite, no OpenCV needed
 fps_check/       list every resolution / frame rate the camera supports (V4L2)
 reso_filter/     same, filtered to one aspect ratio
 pics/            sample lane photos used during development
